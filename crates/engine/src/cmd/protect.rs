@@ -407,6 +407,7 @@ fn check_formatting(s: &Session, id: &str, params: &Value) -> Result<(), CmdErro
                 | "table.modifyStyle"
                 | "table.deleteStyle"
                 | "tools.updateStyles"
+                | "layout.applyNd30"
                 // Copies style definitions in from another file, locked flags included (#3692).
                 | "styles.copyFrom"
         )

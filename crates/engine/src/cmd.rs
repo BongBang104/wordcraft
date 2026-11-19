@@ -50,6 +50,7 @@ pub mod text;
 pub mod tools;
 pub mod user_templates;
 pub mod view;
+pub mod vn_format;
 pub mod wordart;
 
 use serde_json::{Value, json};
@@ -77,6 +78,7 @@ pub fn registry() -> Registry {
     v.extend(insert::specs());
     v.extend(equation::specs());
     v.extend(page::specs());
+    v.extend(vn_format::specs());
     v.extend(table::specs());
     v.extend(table_style::specs());
     v.extend(table_draw::specs());

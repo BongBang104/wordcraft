@@ -1,4 +1,5 @@
-//! Personal fork: spreadsheet cells pasted as plain text become a table.
+//! Personal fork: spreadsheet cells pasted as plain text become a table, and the Vietnamese
+//! administrative document format (Nghị định 30/2020/NĐ-CP).
 
 use serde_json::json;
 use wordcraft_doc::{Block, Document};
@@ -115,4 +116,74 @@ fn hostile_tab_separated_text_never_panics() {
     let mut s = new();
     run(&mut s, "edit.paste", json!({"text": big}));
     assert!(first_table(&s).is_none(), "more rows than the cap stay text");
+}
+
+fn mm(v: f32) -> f32 {
+    v * 72.0 / 25.4
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 0.05
+}
+
+#[test]
+fn nd30_template_has_the_decrees_page_and_font() {
+    let mut s = new();
+    run(&mut s, "file.new", json!({"template": "nd30"}));
+    let x = &s.doc.last_section;
+    assert!(close(x.page_w, 595.28) && close(x.page_h, 841.89), "A4");
+    assert!(close(x.margin_top, mm(20.0)) && close(x.margin_bottom, mm(20.0)));
+    assert!(close(x.margin_left, mm(30.0)) && close(x.margin_right, mm(15.0)));
+    assert!(x.title_page, "no page number on the first page");
+    let normal = s.doc.styles.get("Normal").expect("Normal");
+    assert_eq!(normal.chr.font.as_deref(), Some("Times New Roman"));
+    assert_eq!(normal.chr.size, Some(14.0));
+    let body = s.doc.plain_text(wordcraft_doc::StoryRef::Body);
+    for want in ["CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", "Độc lập - Tự do - Hạnh phúc", "TÊN LOẠI VĂN BẢN", "Nơi nhận:", "Họ và tên"]
+    {
+        assert!(body.contains(want), "{want} in {body}");
+    }
+    // It lays out, and saves and reopens as DOCX with the font and margins.
+    let l = wordcraft_layout::layout(&s.doc, &mut wordcraft_layout::LayoutCache::new(), &Default::default());
+    assert!(!l.pages.is_empty());
+    let bytes = crate::io::save_bytes("x.docx", &s.doc).expect("save");
+    let back = crate::io::open_bytes("x.docx", &bytes).expect("reopen");
+    assert!(close(back.last_section.margin_left, mm(30.0)));
+    assert_eq!(back.styles.get("Normal").and_then(|n| n.chr.font.clone()).as_deref(), Some("Times New Roman"));
+}
+
+#[test]
+fn apply_nd30_sets_page_and_normal_style_and_undoes() {
+    let mut s = new();
+    run(&mut s, "document.setText", json!({"text": "Kính gửi: Ban Giám đốc"}));
+    let before = s.doc.last_section.clone();
+    let r = run(&mut s, "layout.applyNd30", json!({}));
+    assert_eq!(r["size"], json!(14.0));
+    let x = &s.doc.last_section;
+    assert!(close(x.page_w, 595.28) && close(x.margin_left, mm(30.0)) && close(x.margin_right, mm(15.0)));
+    let normal = s.doc.styles.get("Normal").expect("Normal");
+    assert_eq!(normal.para.align, Some(wordcraft_doc::props::Align::Justify));
+    assert_eq!(normal.para.indent_first, Some(36.0));
+    run(&mut s, "edit.undo", json!({}));
+    assert!(close(s.doc.last_section.margin_left, before.margin_left));
+    assert!(close(s.doc.last_section.page_w, before.page_w));
+    // Size 13, and sizes outside the decree's range refused.
+    run(&mut s, "layout.applyNd30", json!({"size": 13}));
+    assert_eq!(s.doc.styles.get("Normal").and_then(|n| n.chr.size), Some(13.0));
+    for bad in [json!({"size": 40}), json!({"size": -1}), json!({"size": "x"}), json!({"size": 1e9})] {
+        assert!(s.run("layout.applyNd30", &bad).is_err() || bad["size"].is_string(), "{bad}");
+    }
+}
+
+#[test]
+fn apply_nd30_reaches_every_section() {
+    let mut s = new();
+    run(&mut s, "document.setText", json!({"text": "Một\nHai"}));
+    run(&mut s, "caret.docEnd", json!({}));
+    run(&mut s, "layout.break", json!({"kind": "nextPage"}));
+    assert!(s.doc.sections().len() >= 2);
+    run(&mut s, "layout.applyNd30", json!({}));
+    for (_, x) in s.doc.sections() {
+        assert!(close(x.margin_left, mm(30.0)) && close(x.margin_top, mm(20.0)), "{x:?}");
+    }
 }

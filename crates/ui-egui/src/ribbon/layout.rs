@@ -25,6 +25,10 @@ pub(super) fn margins_items(ui: &mut Ui, app: &mut WordApp) {
         mi_check(ui, app, &label, on, "layout.margins", json!({"preset": k}));
     }
     mi(ui, app, "Custom Margins…", "ui.dialog", json!({"name": "pageSetup"}));
+    // Vietnamese administrative format (Nghị định 30/2020/NĐ-CP): A4, margins and Normal style.
+    ui.separator();
+    super::common::mi_text(ui, app, "Thể thức NĐ 30/2020 (cỡ chữ 14)", "layout.applyNd30", json!({"size": 14}));
+    super::common::mi_text(ui, app, "Thể thức NĐ 30/2020 (cỡ chữ 13)", "layout.applyNd30", json!({"size": 13}));
 }
 
 pub(super) fn orientation_items(ui: &mut Ui, app: &mut WordApp) {
