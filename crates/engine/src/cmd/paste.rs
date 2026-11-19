@@ -256,6 +256,102 @@ pub fn rich_fragment(s: &mut Session, v: &Value) -> Option<Fragment> {
     Some(adopt(s, doc))
 }
 
+/// Most rows plain tab-separated text pastes as a table.
+const MAX_TSV_ROWS: usize = 1000;
+/// Most columns plain tab-separated text pastes as a table (Word's table limit).
+const MAX_TSV_COLS: usize = 63;
+
+/// Spreadsheet cells as plain text: one line per row, cells separated by tabs, a field with a tab,
+/// line break or quote written in double quotes with `""` for a quote (as Excel and GridCraft
+/// copy). `None` unless every row has the same number of cells, at least two, within
+/// [`MAX_TSV_ROWS`] and [`MAX_TSV_COLS`]; text that merely contains a tab stays text.
+pub fn parse_tsv(text: &str) -> Option<Vec<Vec<String>>> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let text = text.strip_suffix('\n').unwrap_or(&text);
+    if text.is_empty() || !text.contains('\t') {
+        return None;
+    }
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut chars = text.chars().peekable();
+    loop {
+        // One field.
+        let mut field = String::new();
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            loop {
+                match chars.next() {
+                    Some('"') if chars.peek() == Some(&'"') => {
+                        chars.next();
+                        field.push('"');
+                    }
+                    Some('"') => break,
+                    Some(c) => field.push(c),
+                    // An unterminated quote: not spreadsheet cells.
+                    None => return None,
+                }
+            }
+            // Anything after the closing quote but before the separator belongs to the field.
+            while let Some(&c) = chars.peek() {
+                if c == '\t' || c == '\n' {
+                    break;
+                }
+                field.push(c);
+                chars.next();
+            }
+        } else {
+            while let Some(&c) = chars.peek() {
+                if c == '\t' || c == '\n' {
+                    break;
+                }
+                field.push(c);
+                chars.next();
+            }
+        }
+        row.push(field);
+        if row.len() > MAX_TSV_COLS {
+            return None;
+        }
+        match chars.next() {
+            Some('\t') => {}
+            Some(_) => {
+                rows.push(std::mem::take(&mut row));
+                if rows.len() > MAX_TSV_ROWS {
+                    return None;
+                }
+            }
+            None => {
+                rows.push(row);
+                break;
+            }
+        }
+    }
+    let cols = rows.first().map(Vec::len)?;
+    if cols < 2 || rows.iter().any(|r| r.len() != cols) {
+        return None;
+    }
+    Some(rows)
+}
+
+/// [`parse_tsv`]'s cells as an HTML table for the HTML import. Its `border` makes the import keep
+/// the Table Grid style, so the cells show a single-line grid as a table inserted here does.
+fn tsv_table_html(text: &str) -> Option<String> {
+    let rows = parse_tsv(text)?;
+    let esc = |t: &str| t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\n', "<br>");
+    let mut out = String::from("<table border=\"1\" style=\"border-collapse:collapse\">");
+    for r in &rows {
+        out.push_str("<tr>");
+        for c in r {
+            out.push_str("<td>");
+            out.push_str(&esc(c));
+            out.push_str("</td>");
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</table>");
+    Some(out)
+}
+
 /// What a Paste brings in.
 pub enum Pasted {
     /// WordCraft's own copy, or another program's HTML or RTF: it keeps the formatting it carries.
@@ -276,6 +372,19 @@ pub fn paste_content(s: &mut Session, v: &Value) -> Result<Pasted, CmdError> {
     }
     if let Some(f) = rich_fragment(s, v) {
         return Ok(Pasted::Fragment(f));
+    }
+    // Cells copied from a spreadsheet reach a clipboard without HTML (Android's, or a program
+    // that offers only text) as tab-separated lines: paste them as a table. Inside a table cell
+    // the text stays text, as a nested table is rarely wanted there.
+    if let Some(t) = &text
+        && s.sel.focus.path.cell().is_none()
+        && s.sel.anchor.path.cell().is_none()
+        && let Some(html) = tsv_table_html(t)
+    {
+        let doc = import_html(&html);
+        if has_content(&doc) {
+            return Ok(Pasted::Fragment(adopt(s, doc)));
+        }
     }
     match text {
         Some(t) if !t.is_empty() => Ok(Pasted::Text(t)),
