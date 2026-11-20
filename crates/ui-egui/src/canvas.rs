@@ -1529,6 +1529,13 @@ fn live_selection_screen_rects(app: &mut WordApp, rects: &[Rect], scale: f32) ->
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.available_rect_before_wrap();
+    // Android touch screens: a one-finger swipe on the page scrolls it, as in mobile word
+    // processors, instead of dragging out a selection (the Android shell reads this key; a tap
+    // still places the caret, a double tap selects a word and a stylus still drags to select).
+    if cfg!(target_os = "android") {
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::NULL.with("artcraft.touch_pan_rect"), (full, pass)));
+    }
     let layout = prepare_layout(app, ui, full);
     let view = prepare_view(app, ui, full, &layout);
     let scroll_target = if hold_scroll_for_preview(app) { None } else { update_caret_scroll(app, &view) };
