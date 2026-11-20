@@ -341,6 +341,12 @@ pub(crate) struct Props {
     pub(crate) wrap_dist: [Option<u32>; 4],
     /// `wzDescription`: the alternative text.
     pub(crate) alt: String,
+    /// `gtextUNICODE`: the text a WordArt shape draws (a header watermark is one).
+    pub(crate) gtext: String,
+    /// `gtextFont`: the WordArt text's font.
+    pub(crate) gtext_font: String,
+    /// `fillOpacity`, 0..=1.
+    pub(crate) fill_opacity: Option<f32>,
 }
 
 impl Props {
@@ -356,12 +362,18 @@ impl Props {
             if opid & 0x8000 != 0 {
                 let start = complex_at;
                 complex_at = complex_at.saturating_add(op as usize);
-                if pid == 0x0381 {
+                // Complex UTF-16 strings: wzDescription, gtextUNICODE, gtextFont.
+                if matches!(pid, 0x0381 | 0x00C0 | 0x00C5) {
                     let end = complex_at.min(body.len());
                     if let Some(data) = body.get(start..end) {
                         let units: Vec<u16> =
                             data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|u| *u != 0).take(4096).collect();
-                        self.alt = String::from_utf16_lossy(&units);
+                        let text = String::from_utf16_lossy(&units);
+                        match pid {
+                            0x0381 => self.alt = text,
+                            0x00C0 => self.gtext = text,
+                            _ => self.gtext_font = text,
+                        }
                     }
                 }
                 continue;
@@ -377,6 +389,10 @@ impl Props {
                 }
                 0x0104 => self.pib = Some(op),
                 0x0181 => self.fill_color = color(op),
+                0x0182 => {
+                    let v = fixed(op);
+                    self.fill_opacity = v.is_finite().then(|| v.clamp(0.0, 1.0));
+                }
                 // fFilled (bit 4) is valid when fUsefFilled (bit 20) is set.
                 0x01BF if op & (1 << 20) != 0 => self.filled = Some(op & (1 << 4) != 0),
                 0x01BF => {}

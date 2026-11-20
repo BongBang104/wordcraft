@@ -71,6 +71,11 @@ pub(crate) struct Build<'a> {
 /// The floating objects anchored by `PlcfSpa` (at `pair`), as (absolute anchor CP, object),
 /// sorted by CP. `cp_base` turns the PLC's CPs into absolute ones (the header subdocument's
 /// start for `PlcSpaHdr`).
+///
+/// `watermark`, given for the headers' shapes, receives the first WordArt shape there (Word's
+/// Design › Watermark in a .doc, [MS-ODRAW] `gtextUNICODE`) as the document's watermark; such a
+/// shape is drawn behind every page from the setting, not kept as a shape (which would show as
+/// an empty box with the WordArt's fill).
 pub(crate) fn anchors(
     table: &[u8],
     pair: Option<(u32, u32)>,
@@ -78,6 +83,7 @@ pub(crate) fn anchors(
     shapes: &HashMap<u32, Node>,
     b: &Build,
     pics: &mut Pictures,
+    mut watermark: Option<&mut Option<wordcraft_doc::Watermark>>,
 ) -> Vec<(u32, InlineObject)> {
     let Some(pair) = pair else { return Vec::new() };
     let mut out = Vec::new();
@@ -111,6 +117,12 @@ pub(crate) fn anchors(
         float.rot = rot;
         float.flip_h = sp.flip_h();
         float.flip_v = sp.flip_v();
+        if let (Some(slot), Node::Shape(sp)) = (watermark.as_deref_mut(), node)
+            && let Some(wm) = wordart_watermark(sp, w, h, rot)
+        {
+            slot.get_or_insert(wm);
+            continue;
+        }
         let obj = match node {
             Node::Shape(sp) => leaf(sp, w, h, float, b, pics),
             Node::Group(sp, members) => group(sp, members, w, h, float, b, pics),
@@ -178,6 +190,31 @@ fn spa_float(flags: u16, p: &crate::officeart::Props) -> Float {
         dist_bottom: emu(db, 0.0),
         ..Float::default()
     }
+}
+
+/// A header WordArt shape (`gtextUNICODE` set, no picture) as the document's text watermark:
+/// its text and font, its fill colour and transparency, diagonal when turned, stretched to its
+/// `w` × `h` box (points, unturned).
+pub(crate) fn wordart_watermark(sp: &Sp, w: f32, h: f32, rot: f32) -> Option<wordcraft_doc::Watermark> {
+    let p = &sp.props;
+    if p.pib.is_some() {
+        return None;
+    }
+    let text: String = p.gtext.trim_end_matches(['\r', '\n']).chars().take(200).collect();
+    if text.trim().is_empty() {
+        return None;
+    }
+    let default = wordcraft_doc::Watermark::default();
+    let font: String = p.gtext_font.chars().take(100).collect();
+    let size = (w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()).then_some([w.min(4000.0), h.min(4000.0)]);
+    Some(wordcraft_doc::Watermark {
+        text,
+        font: if font.trim().is_empty() { default.font } else { font },
+        color: p.fill_color.unwrap_or(default.color),
+        diagonal: rot != 0.0,
+        semitransparent: p.fill_opacity.is_some_and(|o| o < 1.0),
+        size,
+    })
 }
 
 /// One shape as a picture or a drawn shape, `w` × `h` points.

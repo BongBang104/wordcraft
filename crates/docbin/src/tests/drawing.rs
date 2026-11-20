@@ -651,3 +651,33 @@ fn a_dib_with_a_large_tail_is_charged_for_its_copy() {
     assert!(officeart::blip(&big, 64 << 20, &mut work).is_none());
     assert_eq!(work.left, dib_len - 1);
 }
+
+/// A Word 97–2003 header watermark is a WordArt shape (`gtextUNICODE`, `gtextFont`): it becomes
+/// the document's text watermark, in its fill colour, diagonal when turned, instead of an empty
+/// box with the WordArt's fill.
+#[test]
+fn header_wordart_becomes_the_text_watermark() {
+    let opt = fopt(&[(0x0181, 0x00ED_DCCB), (0x0182, 0x8000), (0x0004, 315 << 16)], &[(0x00C0, wz("BẢN NHÁP")), (0x00C5, wz("Times New Roman"))]);
+    let whole = sp(&[fsp(136, 1025, 0xA00), opt]);
+    let (rec, _) = officeart::record(&whole).unwrap();
+    let mut budget = 10_000;
+    let shape = officeart::shape(rec.body, &mut budget);
+    assert_eq!(shape.props.gtext, "BẢN NHÁP");
+    assert_eq!(shape.props.gtext_font, "Times New Roman");
+    let wm = crate::drawing::wordart_watermark(&shape, 160.0, 80.0, 315.0).unwrap();
+    assert_eq!(wm.text, "BẢN NHÁP");
+    assert_eq!(wm.font, "Times New Roman");
+    assert_eq!(wm.color, Rgb(0xCB, 0xDC, 0xED));
+    assert!(wm.diagonal && wm.semitransparent);
+    assert_eq!(wm.size, Some([160.0, 80.0]));
+
+    // A plain shape, or WordArt with blank text, is not a watermark.
+    let plain = sp(&[fsp(1, 1026, 0xA00), fopt(&[(0x0181, 0x00FF_0000)], &[])]);
+    let (rec, _) = officeart::record(&plain).unwrap();
+    let shape = officeart::shape(rec.body, &mut budget);
+    assert!(crate::drawing::wordart_watermark(&shape, 10.0, 10.0, 0.0).is_none());
+    let blank = sp(&[fsp(136, 1027, 0xA00), fopt(&[], &[(0x00C0, wz("  \r"))])]);
+    let (rec, _) = officeart::record(&blank).unwrap();
+    let shape = officeart::shape(rec.body, &mut budget);
+    assert!(crate::drawing::wordart_watermark(&shape, 10.0, 10.0, 0.0).is_none());
+}

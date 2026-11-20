@@ -328,8 +328,12 @@ fn read_limited(bytes: &[u8], password: Option<&str>, max_paragraphs: usize) -> 
         }
     }
     let build = drawing::Build { bstore: &art.bstore, delay: &word, stories: &tb_stories };
-    let mut drawn = drawing::anchors(&table, fib.pair(fib::pair::PLC_SPA_MOM), 0, &art.main, &build, &mut pics);
-    drawn.extend(drawing::anchors(&table, fib.pair(fib::pair::PLC_SPA_HDR), hdd_base, &art.header, &build, &mut pics));
+    let mut drawn = drawing::anchors(&table, fib.pair(fib::pair::PLC_SPA_MOM), 0, &art.main, &build, &mut pics, None);
+    let mut watermark = None;
+    drawn.extend(drawing::anchors(&table, fib.pair(fib::pair::PLC_SPA_HDR), hdd_base, &art.header, &build, &mut pics, Some(&mut watermark)));
+    if let Some(wm) = watermark {
+        doc.settings.watermark.get_or_insert(wm);
+    }
     drawn.sort_by_key(|(cp, _)| *cp);
     let ctx = WalkCtx { drawn: &drawn, ..ctx };
 

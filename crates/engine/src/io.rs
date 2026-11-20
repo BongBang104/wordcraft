@@ -821,7 +821,32 @@ fn only_case_differs(source: &std::path::Path, destination: &std::path::Path) ->
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
     crate::file_access::check_write(path)?;
     // Like a document save: the old file is replaced only once the new bytes are fully written.
-    safe_save::write(std::path::Path::new(path), bytes).map_err(|e| format!("{path}: {e}"))
+    let saved = safe_save::write(std::path::Path::new(path), bytes);
+    #[cfg(target_os = "android")]
+    let saved = saved.or_else(|e| android_plain_write(std::path::Path::new(path), bytes, e));
+    saved.map_err(|e| format!("{path}: {e}"))
+}
+
+/// Android's emulated shared storage (`/storage/emulated/0/...`, including the app's own
+/// `Android/data` folder where the Android build keeps the working copy of a document opened
+/// from another app) refuses parts of the safe save on some devices: changing a file's mode or
+/// the sibling temporary file fail with "Read-only file system" (EROFS), "Operation not
+/// permitted" (EPERM) or "Permission denied" (EACCES) although the app may write the file
+/// itself. There the file is written in place instead; any other failure is reported as it was.
+#[cfg(target_os = "android")]
+fn android_plain_write(path: &std::path::Path, bytes: &[u8], refused: std::io::Error) -> std::io::Result<()> {
+    const EPERM: i32 = 1;
+    const EACCES: i32 = 13;
+    const EROFS: i32 = 30;
+    let refusal = matches!(refused.raw_os_error(), Some(EPERM | EACCES | EROFS))
+        || matches!(refused.kind(), std::io::ErrorKind::ReadOnlyFilesystem | std::io::ErrorKind::PermissionDenied);
+    if !refusal {
+        return Err(refused);
+    }
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(path).map_err(|_| refused)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 #[cfg(target_arch = "wasm32")]
